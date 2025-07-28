@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Electron</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <!-- <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    /> -->
+    <!-- in your index.html’s <head> -->
+<meta http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        connect-src 'self'
+                    ws://azerothcore.ermine-ghoul.ts.net:3001
+                    ws://nexus-funk.ermine-ghoul.ts.net:7880
+                    http://nexus-funk.ermine-ghoul.ts.net:3001
+                    http://nexus-funk.ermine-ghoul.ts.net:7880;
+        style-src 'self' 'unsafe-inline';
+      ">
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

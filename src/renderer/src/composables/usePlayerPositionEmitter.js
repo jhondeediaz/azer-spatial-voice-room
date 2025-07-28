@@ -1,4 +1,3 @@
-// src/renderer/src/composables/usePlayerPositionEmitter.js
 import { ref } from 'vue'
 import { Room, createLocalAudioTrack } from 'livekit-client'
 
@@ -11,13 +10,13 @@ export default function usePlayerPositionEmitter() {
   const nearbyPlayers = ref([])
 
   // internal state
-  let proximitySocket   = null
-  let reconnectTimer    = null
-  let guid              = null
-  let livekitRoom       = null
-  let currentRoomId     = null
-  let joinedRoom        = false
-  let localAudioTrack   = null  // store track for mute/unmute
+  let proximitySocket = null
+  let reconnectTimer  = null
+  let guid            = null
+  let livekitRoom     = null
+  let currentRoomId   = null
+  let joinedRoom      = false
+  let localAudioTrack = null  // store track for mute/unmute
 
   const DEBUG = true
   function log(...args) {
@@ -80,7 +79,7 @@ export default function usePlayerPositionEmitter() {
       } catch (e) {
         log('Error during LiveKit disconnect:', e)
       }
-      joinedRoom = false
+      joinedRoom    = false
       currentRoomId = null
     }
 
@@ -115,11 +114,11 @@ export default function usePlayerPositionEmitter() {
     livekitRoom.on('trackSubscribed', (track, pub, participant) => {
       if (track.kind === 'audio') {
         const el = track.attach()
-        el.autoplay = true
+        el.autoplay   = true
         el.playsInline = true
         el.dataset.participantSid = participant.sid
         el.style.position = 'absolute'
-        el.style.left = '-9999px'
+        el.style.left     = '-9999px'
         document.body.appendChild(el)
       }
     })
@@ -156,7 +155,7 @@ export default function usePlayerPositionEmitter() {
       const participant = livekitRoom.getParticipantByIdentity(String(p.guid))
       if (!participant) return
 
-      // compute ramp: <=10 →1, 10–50 → (50 - d)/40, >=50 →0
+      // compute ramp: ≤10 → 1, 10–50 → (50−d)/40, ≥50 → 0
       let vol = 0
       if (p.distance <= 10) {
         vol = 1

@@ -2,28 +2,27 @@
   <div>
     <!-- GUID prompt -->
     <div v-if="!guidSet" class="guid-prompt">
-      <input 
-        v-model="guidInput" 
-        type="number" 
-        placeholder="Enter your GUID" 
+      <input
+        v-model="guidInput"
+        type="number"
+        placeholder="Enter your GUID"
       />
       <button @click="setGuidHandler">OK</button>
     </div>
 
     <div v-else class="main-ui">
       <label>
-        <input 
-          v-model="muted" 
-          type="checkbox" 
-          @change="toggleMuted" 
+        <input
+          v-model="muted"
+          type="checkbox"
         />
         Mute (mic only)
       </label>
 
       <label>
         <input
+          v-model="deafened"
           type="checkbox"
-          v-model="deafenedLocal"
         />
         Deafen (mic + speakers)
       </label>
@@ -35,7 +34,7 @@
         <ul>
           <li v-if="nearbyPlayers.length === 0">No players nearby</li>
           <li v-for="p in nearbyPlayers" :key="p.guid">
-            GUID {{ p.guid }} — {{ p.distance !== undefined ? p.distance.toFixed(1) : '—' }} yd
+            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
           </li>
         </ul>
       </div>
@@ -44,28 +43,33 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { useVoiceControl } from '@composables/useVoiceControl'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import usePlayerPositionEmitter from '@composables/usePlayerPositionEmitter'
 
-const { toggleMuted, toggleDeafen, muted, deafened } = useVoiceControl()
-const { setGuid, connectToProximitySocket, dispose, nearbyPlayers } =
-  usePlayerPositionEmitter()
+const {
+  setGuid,
+  connectToProximitySocket,
+  dispose,
+  nearbyPlayers,
+  toggleMic
+} = usePlayerPositionEmitter()
 
-// expose a computed proxy so v-model on deafen updates call toggleDeafen immediately
-const deafenedLocal = computed({
-  get: () => deafened.value,
-  set: (val) => {
-    toggleDeafen(val)
-    if (val) {
-      muted.value = true
-      toggleMuted(true)
-    }
-  },
-})
-
+// UI state
 const guidInput = ref('')
 const guidSet   = ref(false)
+const muted     = ref(false)
+const deafened  = ref(false)
+
+// wire `muted` checkbox to actual mic toggle
+watch(muted, val => {
+  toggleMic(val)
+})
+
+// deafening forces mute
+watch(deafened, val => {
+  muted.value = val
+  toggleMic(val)
+})
 
 onMounted(() => {
   const saved = localStorage.getItem('guid')

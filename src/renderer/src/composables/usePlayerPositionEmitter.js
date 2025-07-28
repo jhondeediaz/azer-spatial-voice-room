@@ -114,7 +114,7 @@ export default function usePlayerPositionEmitter() {
     livekitRoom.on('trackSubscribed', (track, pub, participant) => {
       if (track.kind === 'audio') {
         const el = track.attach()
-        el.autoplay   = true
+        el.autoplay    = true
         el.playsInline = true
         el.dataset.participantSid = participant.sid
         el.style.position = 'absolute'
@@ -124,8 +124,14 @@ export default function usePlayerPositionEmitter() {
     })
 
     try {
-      // create and publish our local mic track
-      localAudioTrack = await createLocalAudioTrack()
+      // create and publish our local mic track with high-quality constraints
+      localAudioTrack = await createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 2,
+        sampleRate: 48000,
+      })
       await livekitRoom.connect(LIVEKIT_URL, tokenStr, {
         autoSubscribe: true,
         name: String(guid),
@@ -143,7 +149,7 @@ export default function usePlayerPositionEmitter() {
   /**
    * Adjust volumes & spatial positions for tracks in `withinRange`.
    * - 0–10 yd => full volume
-   * - 10–50 yd => linearly ramp 1→0
+   * - 10–50 yd => linearly fade 1→0
    * - ≥50 yd => silent
    */
   function updateAudioVolumes(withinRange, self = {}) {
@@ -155,19 +161,18 @@ export default function usePlayerPositionEmitter() {
       const participant = livekitRoom.getParticipantByIdentity(String(p.guid))
       if (!participant) return
 
-      // compute ramp: ≤10 → 1, 10–50 → (50−d)/40, ≥50 → 0
+      // full volume at ≤10 yd, fade from 10→50 yd
       let vol = 0
       if (p.distance <= 10) {
         vol = 1
       } else if (p.distance < 50) {
-        vol = (50 - p.distance) / 40
+        vol = 1 - (p.distance - 10) / 40
       }
+      vol = Math.max(0, Math.min(1, vol))
 
-      // only iterate if audioTracks exist and have forEach
+      // only iterate if audioTracks exist
       const pubs = participant.audioTracks
-      if (!pubs || typeof pubs.forEach !== 'function') {
-        log('no audioTracks to update for', participant.sid)
-      } else {
+      if (pubs && typeof pubs.forEach === 'function') {
         pubs.forEach(pub => {
           const track = pub.track
           if (track && track.kind === 'audio') {
@@ -189,23 +194,21 @@ export default function usePlayerPositionEmitter() {
       return
     }
 
-    // flatten by map
     const allPlayers = Object.values(data).flat()
-    const self       = allPlayers.find(p => String(p.guid) === String(guid))
+    const self = allPlayers.find(p => String(p.guid) === String(guid))
     if (!self) {
       log('Self GUID not found in payload')
       return
     }
 
-    // compute distances to all same-map players
+    // compute distances & filter ≤50 yd on same map
     const nearby = allPlayers
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
       .map(p => {
         const dx = p.x - self.x
         const dy = p.y - self.y
         const dz = (p.z || 0) - (self.z || 0)
-        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz)
-        return { ...p, distance }
+        return { ...p, distance: Math.hypot(dx, dy, dz) }
       })
       .filter(p => p.distance <= 50)
 
@@ -222,9 +225,9 @@ export default function usePlayerPositionEmitter() {
 
   /** Mute or unmute our own mic track */
   function toggleMic(muted) {
-    if (localAudioTrack) {
-      localAudioTrack.setEnabled(!muted)
-    }
+    if (!localAudioTrack) return
+    if (muted) localAudioTrack.mute()
+    else       localAudioTrack.unmute()
   }
 
   /** Clean up websocket & LiveKit connections */

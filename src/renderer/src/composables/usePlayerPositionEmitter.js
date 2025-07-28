@@ -7,7 +7,8 @@ const LIVEKIT_URL       = import.meta.env.VITE_LIVEKIT_URL
 const TOKEN_SERVICE_URL = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
 
 export default function usePlayerPositionEmitter() {
-  const nearbyPlayers = ref([])   // exposed to UI
+  // reactive array for your UI
+  const nearbyPlayers = ref([])
 
   // internal state
   let proximitySocket = null
@@ -22,20 +23,21 @@ export default function usePlayerPositionEmitter() {
     if (DEBUG) console.log('[usePlayerPositionEmitter]', ...args)
   }
 
-  // called by UI to set the GUID
+  /** Called by your component to register its GUID */
   function setGuid(playerGuid) {
     guid = playerGuid
   }
 
-  // open or reopen proximity WS
+  /** Open (or reopen) the proximity websocket */
   function connectToProximitySocket() {
     if (!guid) {
       log('Cannot connect: GUID not set')
       return
     }
-    if (proximitySocket &&
-        (proximitySocket.readyState === WebSocket.OPEN ||
-         proximitySocket.readyState === WebSocket.CONNECTING)
+    if (
+      proximitySocket &&
+      (proximitySocket.readyState === WebSocket.OPEN ||
+       proximitySocket.readyState === WebSocket.CONNECTING)
     ) {
       log('Proximity WS already open')
       return
@@ -44,6 +46,7 @@ export default function usePlayerPositionEmitter() {
     proximitySocket = new WebSocket(PROXIMITY_WS)
     proximitySocket.onopen = () => {
       log('Proximity WS: Connected')
+      // let server know your GUID
       proximitySocket.send(JSON.stringify({ guid }))
     }
     proximitySocket.onerror = e => log('Proximity WS: Error', e)
@@ -63,81 +66,112 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
-  // join or switch LiveKit room based on mapId
+  /** Join (or switch) LiveKit room named by mapId */
   async function joinLivekitRoom(mapId) {
-    if (joinedRoom && currentRoomId === mapId) return;
-
-    // if switching, disconnect first
-    if (joinedRoom && currentRoomId !== mapId) {
-      try {
-        await livekitRoom.disconnect();
-      } catch (e) {
-        log('Error disconnect LiveKit:', e);
-      }
-      joinedRoom = false;
-      currentRoomId = null;
+    if (joinedRoom && currentRoomId === mapId) {
+      return
     }
 
-    // fetch JWT
-    let tokenStr;
+    // if changing maps, disconnect first
+    if (joinedRoom && currentRoomId !== mapId) {
+      try {
+        await livekitRoom.disconnect()
+      } catch (e) {
+        log('Error during LiveKit disconnect:', e)
+      }
+      joinedRoom = false
+      currentRoomId = null
+    }
+
+    // fetch a fresh JWT
+    let tokenStr
     try {
       const res = await fetch(`${TOKEN_SERVICE_URL}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ guid, room: String(mapId) }),
-      });
-      if (!res.ok) throw new Error(`token fetch failed: ${res.status} ${res.statusText}`);
-      const payload = await res.json();
-      // debug entire payload
-      log('Token payload:', payload);
-      // extract string
-      if (typeof payload.token === 'string') {
-        tokenStr = payload.token;
-      } else if (payload.token && typeof payload.token.token === 'string') {
-        tokenStr = payload.token.token;
-      } else {
-        console.error('Invalid token payload:', payload);
-        throw new Error('Invalid token format');
+      })
+      if (!res.ok) {
+        throw new Error(`token fetch failed: ${res.status} ${res.statusText}`)
       }
-      log('Using token:', tokenStr);
+      const payload = await res.json()
+      log('Token payload:', payload)
+      if (typeof payload.token === 'string') {
+        tokenStr = payload.token
+      } else if (payload.token && typeof payload.token.token === 'string') {
+        tokenStr = payload.token.token
+      } else {
+        throw new Error('Invalid token format')
+      }
+      log('Using token:', tokenStr)
     } catch (err) {
-      log('Token fetch error:', err);
-      return;
+      log('Token fetch error:', err)
+      return
     }
 
-    // connect and publish
-    livekitRoom = new Room();
+    // create & connect Room
+    livekitRoom = new Room()
     livekitRoom.on('trackSubscribed', (track, pub, participant) => {
       if (track.kind === 'audio') {
-        const el = track.attach();
-        el.autoplay = true;
-        el.playsInline = true;
-        el.dataset.participantSid = participant.sid;
-        el.style.position = 'absolute';
-        el.style.left = '-9999px';
-        document.body.appendChild(el);
+        const el = track.attach()
+        el.autoplay = true
+        el.playsInline = true
+        el.dataset.participantSid = participant.sid
+        // hide
+        el.style.position = 'absolute'
+        el.style.left = '-9999px'
+        document.body.appendChild(el)
       }
-    });
+    })
 
     try {
-      const localTrack = await createLocalAudioTrack();
+      const localTrack = await createLocalAudioTrack()
       await livekitRoom.connect(LIVEKIT_URL, tokenStr, {
         autoSubscribe: true,
         name: String(guid),
         room: String(mapId),
-      });
-      await livekitRoom.localParticipant.publishTrack(localTrack);
-      joinedRoom = true;
-      currentRoomId = mapId;
-      log('LiveKit room connected:', mapId);
+      })
+      await livekitRoom.localParticipant.publishTrack(localTrack)
+      joinedRoom    = true
+      currentRoomId = mapId
+      log('LiveKit room connected:', mapId)
     } catch (err) {
-      log('LiveKit connection failed:', err);
+      log('LiveKit connection failed:', err)
     }
   }
 
-  // handle proximity updates
+  /**
+   * Adjust volumes & spatial position for tracks in `withinRange`.
+   * Defaults to empty array so .forEach never fails.
+   */
+  function updateAudioVolumes(withinRange = [], self = {}) {
+    try {
+      withinRange.forEach(p => {
+        const participant = livekitRoom.getParticipantByIdentity(String(p.guid))
+        if (!participant) return
+        participant.audioTracks.forEach(pub => {
+          const track = pub.track
+          if (track && track.kind === 'audio') {
+            const vol = Math.max(0, 1 - p.distance / 10)
+            track.setVolume(vol)
+            track.setSpatialPosition(
+              p.x - self.x,
+              p.y - self.y,
+              (p.z || 0) - (self.z || 0)
+            )
+          }
+        })
+      })
+    } catch (e) {
+      log('Error in updateAudioVolumes:', e)
+    }
+  }
+
+  /** Process each proximity update payload */
   async function handleProximityUpdate(data) {
-    if (!guid || typeof data !== 'object') return
+    if (!guid || typeof data !== 'object') {
+      return
+    }
 
     const allPlayers = Object.values(data).flat()
     const self = allPlayers.find(p => String(p.guid) === String(guid))
@@ -146,12 +180,14 @@ export default function usePlayerPositionEmitter() {
       return
     }
 
-    // compute distances on same map
+    // compute distances for players on same map
     const nearby = allPlayers
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
       .map(p => {
-        const dx = p.x - self.x, dy = p.y - self.y, dz = (p.z||0) - (self.z||0)
-        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz)
+        const dx = p.x - self.x
+        const dy = p.y - self.y
+        const dz = (p.z || 0) - (self.z || 0)
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
         return { ...p, distance }
       })
       .filter(p => p.distance <= 10)
@@ -162,32 +198,22 @@ export default function usePlayerPositionEmitter() {
     if (nearby.length > 0) {
       await joinLivekitRoom(self.map)
       if (joinedRoom) {
-        // update volumes/spatial positions
-        nearby.forEach(p => {
-          const participant = livekitRoom.getParticipantByIdentity(String(p.guid))
-          if (!participant) return
-          participant.audioTracks.forEach(pub => {
-            const track = pub.track
-            if (track && track.kind === 'audio') {
-              const vol = Math.max(0, 1 - p.distance / 10)
-              track.setVolume(vol)
-              track.setSpatialPosition(
-                p.x - self.x,
-                p.y - self.y,
-                (p.z || 0) - (self.z || 0)
-              )
-            }
-          })
-        })
+        updateAudioVolumes(nearby, self)
       }
     }
   }
 
-  // cleanup
+  /** Clean up WS & RT connections */
   function dispose() {
     clearTimeout(reconnectTimer)
-    if (proximitySocket) proximitySocket.close()
-    if (livekitRoom) livekitRoom.disconnect()
+    if (proximitySocket) {
+      proximitySocket.close()
+      proximitySocket = null
+    }
+    if (livekitRoom) {
+      livekitRoom.disconnect()
+      livekitRoom = null
+    }
   }
 
   return {

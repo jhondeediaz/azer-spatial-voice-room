@@ -21,10 +21,9 @@
       </label>
 
       <label>
-        <input 
-          v-model="deafened" 
-          type="checkbox" 
-          @change="toggleDeafen" 
+        <input
+          type="checkbox"
+          v-model="deafenedLocal"
         />
         Deafen (mic + speakers)
       </label>
@@ -45,13 +44,25 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useVoiceControl } from '@composables/useVoiceControl'
 import usePlayerPositionEmitter from '@composables/usePlayerPositionEmitter'
 
 const { toggleMuted, toggleDeafen, muted, deafened } = useVoiceControl()
 const { setGuid, connectToProximitySocket, dispose, nearbyPlayers } =
   usePlayerPositionEmitter()
+
+// expose a computed proxy so v-model on deafen updates call toggleDeafen immediately
+const deafenedLocal = computed({
+  get: () => deafened.value,
+  set: (val) => {
+    toggleDeafen(val)
+    if (val) {
+      muted.value = true
+      toggleMuted(true)
+    }
+  },
+})
 
 const guidInput = ref('')
 const guidSet   = ref(false)

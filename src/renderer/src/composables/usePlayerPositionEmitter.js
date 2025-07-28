@@ -2,29 +2,27 @@
 import { ref } from 'vue'
 import { Room, createLocalAudioTrack } from 'livekit-client'
 
-const PROXIMITY_WS      = import.meta.env.VITE_PROXIMITY_WS
-const LIVEKIT_URL       = import.meta.env.VITE_LIVEKIT_URL
-const TOKEN_SERVICE_URL = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
+const PROXIMITY_WS       = import.meta.env.VITE_PROXIMITY_WS
+const LIVEKIT_URL        = import.meta.env.VITE_LIVEKIT_URL
+const TOKEN_SERVICE_URL  = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
 
 export default function usePlayerPositionEmitter() {
-  // reactive list for the UI
+  // reactive list for your UI
   const nearbyPlayers = ref([])
 
   // internal state
-  let proximitySocket   = null
-  let reconnectTimer    = null
-  let guid              = null
-  let livekitRoom       = null
-  let currentRoomId     = null
-  let joinedRoom        = false
-  let localAudioTrack   = null
+  let proximitySocket = null
+  let reconnectTimer  = null
+  let guid            = null
+  let livekitRoom     = null
+  let currentRoomId   = null
+  let joinedRoom      = false
+  let localAudioTrack = null
 
   const DEBUG = true
-  function log(...args) {
-    if (DEBUG) console.log('[usePlayerPositionEmitter]', ...args)
-  }
+  function log(...args) { if (DEBUG) console.log('[usePlayerPositionEmitter]', ...args) }
 
-  /** Store the player’s GUID from UI */
+  /** Called by your UI to set the player’s GUID before connecting */
   function setGuid(playerGuid) {
     guid = playerGuid
   }
@@ -47,6 +45,7 @@ export default function usePlayerPositionEmitter() {
     proximitySocket = new WebSocket(PROXIMITY_WS)
     proximitySocket.onopen = () => {
       log('Proximity WS: Connected')
+      // let the server know your GUID
       proximitySocket.send(JSON.stringify({ guid }))
     }
     proximitySocket.onerror = e => log('Proximity WS: Error', e)
@@ -66,21 +65,19 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
-  /** Join or switch to a LiveKit room named by mapId */
+  /** Join (or switch) your LiveKit room based on current mapId */
   async function joinLivekitRoom(mapId) {
     if (joinedRoom && currentRoomId === mapId) return
 
+    // if changing maps, disconnect first
     if (joinedRoom && currentRoomId !== mapId) {
-      try {
-        await livekitRoom.disconnect()
-      } catch (e) {
-        log('Error during LiveKit disconnect:', e)
-      }
-      joinedRoom    = false
+      try { await livekitRoom.disconnect() }
+      catch (e) { log('Error during LiveKit disconnect:', e) }
+      joinedRoom = false
       currentRoomId = null
     }
 
-    // fetch JWT
+    // fetch a fresh JWT for this guid+room
     let tokenStr
     try {
       const res = await fetch(`${TOKEN_SERVICE_URL}/token`, {
@@ -91,9 +88,13 @@ export default function usePlayerPositionEmitter() {
       if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`)
       const payload = await res.json()
       log('Token payload:', payload)
+      // support either { token: '...' } or { token: { token: '...' } }
       if (typeof payload.token === 'string') {
         tokenStr = payload.token
-      } else if (payload.token && typeof payload.token.token === 'string') {
+      } else if (
+        payload.token &&
+        typeof payload.token.token === 'string'
+      ) {
         tokenStr = payload.token.token
       } else {
         throw new Error('Invalid token format')
@@ -104,7 +105,7 @@ export default function usePlayerPositionEmitter() {
       return
     }
 
-    // setup room & subscribe
+    // create the Room and subscribe to incoming audio tracks
     livekitRoom = new Room()
     livekitRoom.on('trackSubscribed', (track, _, participant) => {
       if (track.kind === 'audio') {
@@ -112,6 +113,7 @@ export default function usePlayerPositionEmitter() {
         el.autoplay    = true
         el.playsInline = true
         el.dataset.participantSid = participant.sid
+        // hide offscreen
         el.style.position = 'absolute'
         el.style.left     = '-9999px'
         document.body.appendChild(el)
@@ -119,12 +121,13 @@ export default function usePlayerPositionEmitter() {
     })
 
     try {
-      // mic track w/ auto gain, stereo @48 kHz
+      // grab your mic, with echo/noise suppression off for cleaner spatial
       localAudioTrack = await createLocalAudioTrack({
-        autoGainControl: true,
-        channelCount: 2,
-        sampleRate: 48000,
+        echoCancellation:   false,
+        noiseSuppression:   false,
+        autoGainControl:    false,
       })
+      // connect & publish
       await livekitRoom.connect(LIVEKIT_URL, tokenStr, {
         autoSubscribe: true,
         name: String(guid),
@@ -140,44 +143,57 @@ export default function usePlayerPositionEmitter() {
   }
 
   /**
-   * Update volumes & positions:
-   * • ≤10 yd ⇒ vol=1
-   * • 10–50 yd ⇒ vol linearly fades 1→0
-   * • >50 yd   ⇒ vol=0
+   * Apply volume + spatial panning:
+   *  - ≤10 yd → vol = 1
+   *  - 10–50 yd → linearly fade from 1 → 0
+   *  - >50 yd → vol = 0
    */
-  function updateAudioVolumes(withinRange, self = {}) {
-    if (!joinedRoom || !livekitRoom) return
+  function updateAudioVolumes(withinRange, self) {
+    if (!joinedRoom || !livekitRoom) return;
 
-    livekitRoom.participants.forEach(participant => {
-      participant.audioTracks.forEach(pub => {
-        const track = pub.track
-        if (track?.kind === 'audio') {
-          // find matching proximity entry
-          const p = withinRange.find(x => String(x.guid) === participant.identity)
-          let vol = 0
+    // safely grab participants map and convert to an array
+    const participantsMap = livekitRoom.participants ?? new Map();
+    const participants = Array.from(participantsMap.values());
+    participants.forEach(participant => {
+      // each publication may contain an audio track
+      for (const pub of participant.getTrackPublications()) {
+        const track = pub.track;
+        if (track && track.kind === 'audio') {
+          // find this participant in the proximity list
+          const p = withinRange.find(x => String(x.guid) === participant.identity);
+          let vol = 0;
+
           if (p) {
+            // 0–10 yd → full volume
             if (p.distance <= 10) {
-              vol = 1
-            } else if (p.distance < 50) {
-              vol = 1 - (p.distance - 10) / 40
+              vol = 1;
             }
-            vol = Math.max(0, Math.min(1, vol))
+            // 10–50 yd → linear fade
+            else if (p.distance < 50) {
+              vol = 1 - (p.distance - 10) / 40;
+            }
+            // clamp 0–
+            vol = Math.max(0, Math.min(1, vol));
+            // apply spatial position
             track.setSpatialPosition(
               p.x - self.x,
               p.y - self.y,
-              (p.z || 0) - (self.z || 0)
-            )
+              (p.z || 0) - (self.z || 0),
+            );
           }
-          track.setVolume(vol)
+
+          // set the computed volume
+          track.setVolume(vol);
         }
-      })
-    })
+      }
+    });
   }
 
-  /** Process each proximity payload */
+  /** When new proximity data arrives… */
   async function handleProximityUpdate(data) {
     if (!guid || typeof data !== 'object') return
 
+    // flatten per-map arrays
     const allPlayers = Object.values(data).flat()
     const self = allPlayers.find(p => String(p.guid) === String(guid))
     if (!self) {
@@ -185,6 +201,7 @@ export default function usePlayerPositionEmitter() {
       return
     }
 
+    // compute distances for same-map peers
     const nearby = allPlayers
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
       .map(p => {
@@ -198,30 +215,28 @@ export default function usePlayerPositionEmitter() {
     nearbyPlayers.value = nearby
     log('Nearby players:', nearby)
 
-    // always ensure room is joined and volumes updated
-    if (nearby.length > 0) {
-      await joinLivekitRoom(self.map)
-    }
+    // always ensure you’re in the right room
+    await joinLivekitRoom(self.map)
+    // then update volumes
     if (joinedRoom) {
       updateAudioVolumes(nearby, self)
     }
   }
 
-  /** Mute/unmute your mic via toggleMic(true/false) */
+  /** Expose a mic-mute toggle for your UI */
   function toggleMic(muted) {
     if (!localAudioTrack) return
-    if (muted) localAudioTrack.mute()
-    else       localAudioTrack.unmute()
+    muted ? localAudioTrack.mute() : localAudioTrack.unmute()
   }
 
-  /** Clean up WS + LiveKit */
+  /** Clean up WS & LiveKit on unmount */
   function dispose() {
     clearTimeout(reconnectTimer)
     proximitySocket?.close()
     livekitRoom?.disconnect()
     proximitySocket = null
-    livekitRoom   = null
-    joinedRoom    = false
+    livekitRoom    = null
+    joinedRoom     = false
   }
 
   return {

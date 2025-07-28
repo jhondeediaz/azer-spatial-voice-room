@@ -1,4 +1,3 @@
-// src/renderer/src/composables/usePlayerPositionEmitter.js
 import { ref } from 'vue'
 import { Room, createLocalAudioTrack } from 'livekit-client'
 
@@ -186,15 +185,19 @@ export default function usePlayerPositionEmitter() {
               );
             }
           } else {
-            // Not in range, force volume to 0
             vol = 0;
           }
           log('Setting volume for', participant.identity, 'to', vol);
+
+          // Set on track (may not work everywhere)
           if (typeof track.setVolume === 'function') {
             track.setVolume(vol);
           }
+          // Set on audio element (this is most reliable)
           if (participant._audioElement) {
             participant._audioElement.volume = vol;
+            participant._audioElement.muted = vol === 0;
+            log('Audio element for', participant.identity, 'set volume:', vol, 'muted:', vol === 0);
           }
         }
       }
@@ -269,6 +272,6 @@ export default function usePlayerPositionEmitter() {
     dispose,
     nearbyPlayers,
     toggleMic,
-    updateSelfPosition,
+    updateSelfPosition
   }
 }

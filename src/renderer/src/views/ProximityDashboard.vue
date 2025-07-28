@@ -10,110 +10,102 @@
       <button @click="setGuidHandler">OK</button>
     </div>
 
-    <!-- main UI -->
+    <!-- Main UI -->
     <div v-else class="main-ui">
       <label>
         <input type="checkbox" v-model="muted" />
         Mute (mic only)
       </label>
-
+      <label>
+        <input type="checkbox" v-model="deafened" />
+        Deafen (mic + speakers)
+      </label>
       <button @click="resetGuid">Change GUID</button>
 
-      <div class="debug">
-        <h3>Nearby Players</h3>
-        <ul>
-          <li v-if="nearbyPlayers.length === 0">
-            No players within 50 yd
-          </li>
-          <li v-for="p in nearbyPlayers" :key="p.guid">
-            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
-          </li>
-        </ul>
-      </div>
-
-      <!-- one <audio> per player, Vue-rendered -->
-      <div style="display:none">
+      <!-- Audio players rendered by Vue so volume bindings work -->
+      <div class="audio-container">
         <audio
           v-for="p in nearbyPlayers"
           :key="p.guid"
           :data-guid="p.guid"
-          ref="el => audioEls.set(p.guid, el)"
           autoplay
           playsinline
-        />
+          :volume="computeVolume(p.distance)"
+          :muted="deafened"
+        ></audio>
+      </div>
+
+      <!-- Debug list -->
+      <div class="debug">
+        <h3>Nearby Players</h3>
+        <ul>
+          <li v-if="nearbyPlayers.length === 0">No players nearby</li>
+          <li v-for="p in nearbyPlayers" :key="p.guid">
+            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
+          </li>
+        </ul>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import usePlayerPositionEmitter from '@composables/usePlayerPositionEmitter'
 
 const {
-  nearbyPlayers,
   setGuid,
   connectToProximitySocket,
-  toggleMic,
-  dispose
+  dispose,
+  nearbyPlayers,
+  toggleMic
 } = usePlayerPositionEmitter()
 
 // UI state
 const guidInput = ref('')
 const guidSet   = ref(false)
 const muted     = ref(false)
+const deafened  = ref(false)
 
-// store DOM refs: guid → HTMLAudioElement
-const audioEls = ref(new Map())
-
-// 1) wire mute checkbox
-watch(muted, m => toggleMic(m))
-
-// 2) whenever our list changes, update volumes
-watch(nearbyPlayers, async list => {
-  await nextTick()
-  for (const p of list) {
-    const el = audioEls.value.get(p.guid)
-    if (!el) continue
-    // ≤10 yd → 1 ; 10–50 yd → linearly fade → 0
-    let v = p.distance <= 10
-      ? 1
-      : p.distance < 50
-      ? 1 - (p.distance - 10) / 40
-      : 0
-    v = Math.max(0, Math.min(1, v))
-    el.volume = v
-  }
+// Mic mute/unmute binding
+watch(muted, val => toggleMic(val))
+// Deafening forces mute
+watch(deafened, val => {
+  muted.value = val
+  toggleMic(val)
 })
 
-// startup / teardown
+// volume mapping: ≤10 yd → 1, 10–100 yd → fade, ≥100 yd → 0
+function computeVolume(d) {
+  if (d <= 10) return 1
+  if (d >= 100) return 0
+  return 1 - (d - 10) / 90
+}
+
 onMounted(() => {
   const saved = localStorage.getItem('guid')
   if (saved) {
-    guidInput.value = saved
-    guidSet.value   = true
     setGuid(Number(saved))
+    guidInput.value = saved
+    guidSet.value    = true
     connectToProximitySocket()
   }
 })
 
-onUnmounted(() => {
-  dispose()
-})
+onUnmounted(() => dispose())
 
-// handlers
 function setGuidHandler() {
   if (!guidInput.value) return
   localStorage.setItem('guid', guidInput.value)
-  guidSet.value = true
   setGuid(Number(guidInput.value))
+  guidSet.value = true
   connectToProximitySocket()
 }
 
 function resetGuid() {
   localStorage.removeItem('guid')
   guidInput.value = ''
-  guidSet.value   = false
+  guidSet.value    = false
 }
 </script>
 
@@ -123,7 +115,8 @@ function resetGuid() {
   flex-direction: column;
   gap: 0.5rem;
 }
-input[type='number'], button {
+input[type='number'],
+button {
   padding: 0.5rem;
   font-size: 0.9rem;
   background: #2e2e40;
@@ -133,5 +126,7 @@ input[type='number'], button {
 }
 button:hover { background: #44445c; }
 label { display: block; margin-top: 0.5rem; }
+.audio-container { margin: 1rem 0; }
+.audio-container audio { width: 100%; margin-bottom: 0.5rem; }
 .debug { margin-top: 1rem; font-size: 0.8rem; }
 </style>

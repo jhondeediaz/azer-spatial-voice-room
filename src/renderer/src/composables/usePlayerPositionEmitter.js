@@ -109,6 +109,10 @@ export default function usePlayerPositionEmitter() {
     livekitRoom = new Room()
     livekitRoom.on('trackSubscribed', (track, _, participant) => {
       if (track.kind === 'audio') {
+        // Remove previous element if exists
+        if (participant._audioElement) {
+          participant._audioElement.remove();
+        }
         const el = track.attach()
         el.autoplay    = true
         el.playsInline = true
@@ -117,6 +121,14 @@ export default function usePlayerPositionEmitter() {
         el.style.position = 'absolute'
         el.style.left     = '-9999px'
         document.body.appendChild(el)
+        // Store a reference to the element for later volume control
+        participant._audioElement = el
+      }
+    })
+    livekitRoom.on('participantDisconnected', (participant) => {
+      if (participant._audioElement) {
+        participant._audioElement.remove();
+        participant._audioElement = null;
       }
     })
 
@@ -130,7 +142,7 @@ export default function usePlayerPositionEmitter() {
       // connect & publish
       await livekitRoom.connect(LIVEKIT_URL, tokenStr, {
         autoSubscribe: true,
-        name: String(guid),
+        name: String(guid), // This should match your guid!
         room: String(mapId),
       })
       await livekitRoom.localParticipant.publishTrack(localAudioTrack)
@@ -151,39 +163,39 @@ export default function usePlayerPositionEmitter() {
   function updateAudioVolumes(withinRange, self) {
     if (!joinedRoom || !livekitRoom) return;
 
-    // safely grab participants map and convert to an array
     const participantsMap = livekitRoom.participants ?? new Map();
     const participants = Array.from(participantsMap.values());
     participants.forEach(participant => {
-      // each publication may contain an audio track
       for (const pub of participant.getTrackPublications()) {
         const track = pub.track;
         if (track && track.kind === 'audio') {
-          // find this participant in the proximity list
           const p = withinRange.find(x => String(x.guid) === participant.identity);
           let vol = 0;
-
           if (p) {
-            // 0–10 yd → full volume
             if (p.distance <= 10) {
               vol = 1;
-            }
-            // 10–50 yd → linear fade
-            else if (p.distance < 50) {
+            } else if (p.distance < 50) {
               vol = 1 - (p.distance - 10) / 40;
             }
-            // clamp 0–
             vol = Math.max(0, Math.min(1, vol));
-            // apply spatial position
-            track.setSpatialPosition(
-              p.x - self.x,
-              p.y - self.y,
-              (p.z || 0) - (self.z || 0),
-            );
+            if (typeof track.setSpatialPosition === 'function') {
+              track.setSpatialPosition(
+                p.x - self.x,
+                p.y - self.y,
+                (p.z || 0) - (self.z || 0),
+              );
+            }
+          } else {
+            // Not in range, force volume to 0
+            vol = 0;
           }
-
-          // set the computed volume
-          track.setVolume(vol);
+          log('Setting volume for', participant.identity, 'to', vol);
+          if (typeof track.setVolume === 'function') {
+            track.setVolume(vol);
+          }
+          if (participant._audioElement) {
+            participant._audioElement.volume = vol;
+          }
         }
       }
     });
@@ -223,6 +235,18 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
+  /** Call this when your own position changes */
+  function updateSelfPosition(newX, newY, newZ) {
+    const self = {
+      guid,
+      x: newX,
+      y: newY,
+      z: newZ,
+      map: currentRoomId,
+    };
+    updateAudioVolumes(nearbyPlayers.value, self);
+  }
+
   /** Expose a mic-mute toggle for your UI */
   function toggleMic(muted) {
     if (!localAudioTrack) return
@@ -245,5 +269,6 @@ export default function usePlayerPositionEmitter() {
     dispose,
     nearbyPlayers,
     toggleMic,
+    updateSelfPosition,
   }
 }

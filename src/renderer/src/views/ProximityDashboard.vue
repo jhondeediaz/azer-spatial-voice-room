@@ -115,23 +115,31 @@ function resetGuid() {
 </script>
 
 <style>
-.guid-prompt {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.guid-prompt,
+.main-ui {
+  max-width: 320px;
+  background: #23233a;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px #0002;
+  font-size: 0.95rem;
 }
+
 input[type='number'],
 button {
-  padding: 0.5rem;
   font-size: 0.9rem;
   background: #2e2e40;
   color: white;
   border: none;
   border-radius: 4px;
 }
+
+button {
+  margin-top: 0.3rem;
+}
+
 button:hover { background: #44445c; }
-label { display: block; margin-top: 0.5rem; }
-.audio-container { margin: 1rem 0; }
-.audio-container audio { width: 100%; margin-bottom: 0.5rem; }
-.debug { margin-top: 1rem; font-size: 0.8rem; }
+label { display: block; margin: 0.3rem 0; font-size: 0.95em; }
+.audio-container { margin: 0.5rem 0; }
+.audio-container audio { width: 100%; margin-bottom: 0.3rem; }
+.debug { margin-top: 0.5rem; font-size: 0.8rem; }
 </style>

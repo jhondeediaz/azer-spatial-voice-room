@@ -16,7 +16,7 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
-  const audioContexts = new Map(); // guid -> { stereoPanner, gainNode, source, el }
+  const audioContexts = new Map(); // guid -> { stereoPanner, source, el }
 
   function log(...args) { console.log('[usePlayerPositionEmitter]', ...args) }
 
@@ -160,31 +160,33 @@ export default function usePlayerPositionEmitter() {
             if (el) {
               track.attach(el);
               let entry = audioContexts.get(p.guid);
-              // Make panning dramatic by using a small maxPanDistance
-              const maxPanDistance = 5; // very small for hard panning
-              const maxVolumeDistance = 150; // match your peer filter
-              let pan = 0;
-              if (Math.abs(p.x - self.x) < maxPanDistance) {
-                pan = (p.x - self.x) / maxPanDistance;
-                pan = Math.max(-1, Math.min(1, pan));
+              // --- Volume logic: 100% if <=5, fade to 0% at 150 ---
+              const minFullVolumeDistance = 5;
+              const maxVolumeDistance = 150;
+              let volume;
+              if (p.distance <= minFullVolumeDistance) {
+                volume = 1;
+              } else if (p.distance >= maxVolumeDistance) {
+                volume = 0;
               } else {
-                pan = (p.x - self.x) > 0 ? 1 : -1;
+                volume = 1 - ((p.distance - minFullVolumeDistance) / (maxVolumeDistance - minFullVolumeDistance));
               }
-              // Volume fades with distance (linear fade)
-              let gain = 1 - (p.distance / maxVolumeDistance);
-              gain = Math.max(0, Math.min(1, gain));
+              volume = Math.max(0, Math.min(1, volume));
+              el.volume = volume;
+              // --- Panning logic: smooth pan between -1 and 1 ---
+              const maxPanDistance = 5; // adjust for smoother or more dramatic pan
+              let pan = (p.x - self.x) / maxPanDistance;
+              pan = Math.max(-1, Math.min(1, pan));
               if (!entry) {
                 const source = sharedAudioContext.createMediaElementSource(el);
                 const stereoPanner = sharedAudioContext.createStereoPanner();
-                const gainNode = sharedAudioContext.createGain();
                 stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime);
-                gainNode.gain.setValueAtTime(gain, sharedAudioContext.currentTime);
-                source.connect(stereoPanner).connect(gainNode).connect(sharedAudioContext.destination);
-                audioContexts.set(p.guid, { stereoPanner, gainNode, source, el });
+                source.connect(stereoPanner).connect(sharedAudioContext.destination);
+                audioContexts.set(p.guid, { stereoPanner, source, el });
               } else {
                 entry.stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime);
-                entry.gainNode.gain.setValueAtTime(gain, sharedAudioContext.currentTime);
               }
+              console.log(`guid=${p.guid} pan=${pan} volume=${volume}`);
             }
           }
         });
@@ -224,10 +226,9 @@ export default function usePlayerPositionEmitter() {
     livekitRoom?.disconnect()
     livekitRoom = null
     // Clean up audio contexts
-    audioContexts.forEach(({ stereoPanner, gainNode, source }) => {
+    audioContexts.forEach(({ stereoPanner, source }) => {
       try { source.disconnect(); } catch {}
       try { stereoPanner.disconnect(); } catch {}
-      try { gainNode.disconnect(); } catch {}
     });
     audioContexts.clear();
     if (sharedAudioContext) {

@@ -20,7 +20,7 @@
         <input type="checkbox" v-model="deafened" />
         Deafen (mic + speakers)
       </label>
-      <button @click="resetGuid">Change GUID</button>
+      <button @click="resetGuid">Change ID</button>
 
       <!-- Audio players rendered by Vue so volume bindings work -->
       <div class="audio-container">
@@ -36,7 +36,7 @@
       </div>
 
       <!-- Debug list -->
-      <div class="debug">
+      <div class="debug" v-show="debug">
         <h3>Nearby Players</h3>
         <ul>
           <li v-if="nearbyPlayers.length === 0">No players nearby</li>
@@ -66,13 +66,20 @@ const guidInput = ref('')
 const guidSet   = ref(false)
 const muted     = ref(false)
 const deafened  = ref(false)
+const debug = ref(false)
 
 // Mic mute/unmute binding
-watch(muted, val => toggleMic(val))
+watch(muted, val => {
+  if (!val && deafened.value) {
+    // If unmuting while deafened, also undeafen
+    deafened.value = false
+  }
+  toggleMic(val)
+})
 // Deafening forces mute
 watch(deafened, val => {
-  muted.value = val
-  toggleMic(val)
+  if (val) muted.value = true
+  toggleMic(muted.value)
 })
 
 function computeVolume(d) {

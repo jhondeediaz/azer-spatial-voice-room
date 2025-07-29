@@ -5,6 +5,9 @@ const PROXIMITY_WS      = import.meta.env.VITE_PROXIMITY_WS
 const LIVEKIT_URL       = import.meta.env.VITE_LIVEKIT_URL
 const TOKEN_SERVICE_URL = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
 
+// Use a shared AudioContext for all positional audio
+let sharedAudioContext = null
+
 export default function usePlayerPositionEmitter() {
   const nearbyPlayers  = ref([])
   let ws               = null
@@ -13,7 +16,7 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
-  const audioContexts = new Map(); // guid -> { context, panner, source, el }
+  const audioContexts = new Map(); // guid -> { stereoPanner, gainNode, source, el }
 
   function log(...args) { console.log('[usePlayerPositionEmitter]', ...args) }
 
@@ -107,12 +110,6 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
-  function safeSetValue(param, value, context) {
-    if (typeof value === 'number' && isFinite(value)) {
-      param.setValueAtTime(value, context.currentTime);
-    }
-  }
-
   /** Handle each proximity update */
   async function handleProximityUpdate(data) {
     if (!guid || typeof data !== 'object') return
@@ -146,6 +143,12 @@ export default function usePlayerPositionEmitter() {
 
     // wait for Vue to render <audio> elements, then attach tracks
     await nextTick()
+
+    // Use a shared AudioContext for all sources for best positional effect
+    if (!sharedAudioContext) {
+      sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
     peers.forEach(p => {
       if (!livekitRoom) return;
       const participant = livekitRoom.getParticipantByIdentity(String(p.guid));
@@ -157,29 +160,30 @@ export default function usePlayerPositionEmitter() {
             if (el) {
               track.attach(el);
               let entry = audioContexts.get(p.guid);
-              if (!entry) {
-                const context = new (window.AudioContext || window.webkitAudioContext)();
-                const source = context.createMediaElementSource(el);
-                const panner = context.createPanner();
-                panner.panningModel = "HRTF";
-                panner.distanceModel = "exponential";
-                panner.refDistance = 100;
-                panner.maxDistance = 500;
-                panner.rolloffFactor = 2;
-                panner.coneInnerAngle = 360;
-                panner.coneOuterAngle = 360;
-                panner.coneOuterGain = 1;
-                // Set initial position safely
-                safeSetValue(panner.positionX, p.x - self.x, context);
-                safeSetValue(panner.positionY, p.y - self.y, context);
-                safeSetValue(panner.positionZ, (p.z || 0) - (self.z || 0), context);
-                source.connect(panner).connect(context.destination);
-                audioContexts.set(p.guid, { context, panner, source, el });
+              // Make panning dramatic by using a small maxPanDistance
+              const maxPanDistance = 5; // very small for hard panning
+              const maxVolumeDistance = 150; // match your peer filter
+              let pan = 0;
+              if (Math.abs(p.x - self.x) < maxPanDistance) {
+                pan = (p.x - self.x) / maxPanDistance;
+                pan = Math.max(-1, Math.min(1, pan));
               } else {
-                // Update position safely
-                safeSetValue(entry.panner.positionX, p.x - self.x, entry.context);
-                safeSetValue(entry.panner.positionY, p.y - self.y, entry.context);
-                safeSetValue(entry.panner.positionZ, (p.z || 0) - (self.z || 0), entry.context);
+                pan = (p.x - self.x) > 0 ? 1 : -1;
+              }
+              // Volume fades with distance (linear fade)
+              let gain = 1 - (p.distance / maxVolumeDistance);
+              gain = Math.max(0, Math.min(1, gain));
+              if (!entry) {
+                const source = sharedAudioContext.createMediaElementSource(el);
+                const stereoPanner = sharedAudioContext.createStereoPanner();
+                const gainNode = sharedAudioContext.createGain();
+                stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime);
+                gainNode.gain.setValueAtTime(gain, sharedAudioContext.currentTime);
+                source.connect(stereoPanner).connect(gainNode).connect(sharedAudioContext.destination);
+                audioContexts.set(p.guid, { stereoPanner, gainNode, source, el });
+              } else {
+                entry.stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime);
+                entry.gainNode.gain.setValueAtTime(gain, sharedAudioContext.currentTime);
               }
             }
           }
@@ -220,8 +224,16 @@ export default function usePlayerPositionEmitter() {
     livekitRoom?.disconnect()
     livekitRoom = null
     // Clean up audio contexts
-    audioContexts.forEach(({ context }) => context.close());
+    audioContexts.forEach(({ stereoPanner, gainNode, source }) => {
+      try { source.disconnect(); } catch {}
+      try { stereoPanner.disconnect(); } catch {}
+      try { gainNode.disconnect(); } catch {}
+    });
     audioContexts.clear();
+    if (sharedAudioContext) {
+      sharedAudioContext.close();
+      sharedAudioContext = null;
+    }
   }
 
   return {
@@ -229,5 +241,7 @@ export default function usePlayerPositionEmitter() {
     setGuid,
     connectToProximitySocket,
     toggleMic,
+    dispose,
+    changeMic,
   }
 }

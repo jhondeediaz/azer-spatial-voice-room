@@ -13,6 +13,7 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
+  const audioContexts = new Map(); // guid -> { context, panner, source, el }
 
   function log(...args) { console.log('[usePlayerPositionEmitter]', ...args) }
 
@@ -106,6 +107,12 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
+  function safeSetValue(param, value, context) {
+    if (typeof value === 'number' && isFinite(value)) {
+      param.setValueAtTime(value, context.currentTime);
+    }
+  }
+
   /** Handle each proximity update */
   async function handleProximityUpdate(data) {
     if (!guid || typeof data !== 'object') return
@@ -115,18 +122,21 @@ export default function usePlayerPositionEmitter() {
     const self = all.find(p => String(p.guid) === String(guid))
     if (!self) return log('⚠️ self not in payload')
 
-    // compute peers on same map within 100 yd
+    // compute peers on same map within 150 yd
     const peers = all
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
       .map(p => ({
         guid: p.guid,
+        x: p.x,
+        y: p.y,
+        z: p.z || 0,
         distance: Math.hypot(
           p.x - self.x,
           p.y - self.y,
           (p.z || 0) - (self.z || 0)
         )
       }))
-      .filter(p => p.distance <= 100)
+      .filter(p => p.distance <= 150)
 
     nearbyPlayers.value = peers
     log('🔍 nearby', peers)
@@ -137,17 +147,45 @@ export default function usePlayerPositionEmitter() {
     // wait for Vue to render <audio> elements, then attach tracks
     await nextTick()
     peers.forEach(p => {
-      const participant = livekitRoom.getParticipantByIdentity(String(p.guid))
+      if (!livekitRoom) return;
+      const participant = livekitRoom.getParticipantByIdentity(String(p.guid));
       if (participant) {
         participant.getTrackPublications().forEach(pub => {
-          const track = pub.track
+          const track = pub.track;
           if (track && track.kind === 'audio') {
-            const el = document.querySelector(`audio[data-guid="${p.guid}"]`)
-            if (el) track.attach(el)
+            const el = document.querySelector(`audio[data-guid="${p.guid}"]`);
+            if (el) {
+              track.attach(el);
+              let entry = audioContexts.get(p.guid);
+              if (!entry) {
+                const context = new (window.AudioContext || window.webkitAudioContext)();
+                const source = context.createMediaElementSource(el);
+                const panner = context.createPanner();
+                panner.panningModel = "HRTF";
+                panner.distanceModel = "exponential";
+                panner.refDistance = 100;
+                panner.maxDistance = 500;
+                panner.rolloffFactor = 2;
+                panner.coneInnerAngle = 360;
+                panner.coneOuterAngle = 360;
+                panner.coneOuterGain = 1;
+                // Set initial position safely
+                safeSetValue(panner.positionX, p.x - self.x, context);
+                safeSetValue(panner.positionY, p.y - self.y, context);
+                safeSetValue(panner.positionZ, (p.z || 0) - (self.z || 0), context);
+                source.connect(panner).connect(context.destination);
+                audioContexts.set(p.guid, { context, panner, source, el });
+              } else {
+                // Update position safely
+                safeSetValue(entry.panner.positionX, p.x - self.x, entry.context);
+                safeSetValue(entry.panner.positionY, p.y - self.y, entry.context);
+                safeSetValue(entry.panner.positionZ, (p.z || 0) - (self.z || 0), entry.context);
+              }
+            }
           }
-        })
+        });
       }
-    })
+    });
   }
 
   /** Mute/unmute your mic */
@@ -156,12 +194,34 @@ export default function usePlayerPositionEmitter() {
     mute ? localAudioTrack.mute() : localAudioTrack.unmute()
   }
 
+  /** Change the microphone device */
+  async function changeMic(deviceId) {
+    if (!livekitRoom) return;
+    // Unpublish and stop the old track
+    if (localAudioTrack) {
+      await livekitRoom.localParticipant.unpublishTrack(localAudioTrack);
+      localAudioTrack.stop();
+      localAudioTrack = null;
+    }
+    // Create and publish the new track
+    localAudioTrack = await createLocalAudioTrack({
+      deviceId: { exact: deviceId },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    });
+    await livekitRoom.localParticipant.publishTrack(localAudioTrack);
+  }
+
   /** Cleanup on unmount */
   function dispose() {
     clearTimeout(reconnectTimer)
     ws?.close()
     livekitRoom?.disconnect()
     livekitRoom = null
+    // Clean up audio contexts
+    audioContexts.forEach(({ context }) => context.close());
+    audioContexts.clear();
   }
 
   return {
@@ -169,6 +229,5 @@ export default function usePlayerPositionEmitter() {
     setGuid,
     connectToProximitySocket,
     toggleMic,
-    dispose,
   }
 }

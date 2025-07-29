@@ -75,13 +75,11 @@ watch(deafened, val => {
   toggleMic(val)
 })
 
-// volume mapping: ≤10 yd → 1, 10–100 yd → fade, ≥100 yd → 0
 function computeVolume(d) {
   if (d <= 10) return 1
-  if (d >= 100) return 0
-  return 1 - (d - 10) / 90
+  if (d >= 150) return 0
+  return 1 - (d - 10) / 140
 }
-
 onMounted(() => {
   const saved = localStorage.getItem('guid')
   if (saved) {

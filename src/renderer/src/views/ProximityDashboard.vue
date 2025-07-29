@@ -22,34 +22,36 @@
       </label>
       <button @click="resetGuid">Change GUID</button>
 
-      <h3>Nearby Players (≤150 yd)</h3>
-      <ul>
-        <li v-if="nearbyPlayers.length === 0">No one nearby</li>
-        <li v-for="p in nearbyPlayers" :key="p.guid">
-          GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
-        </li>
-      </ul>
-
-      <!-- Hidden audio tags, bound to Vue so volume updates automatically -->
+      <!-- Audio players rendered by Vue so volume bindings work -->
       <div class="audio-container">
         <audio
           v-for="p in nearbyPlayers"
           :key="p.guid"
-          ref="audios"
+          :data-guid="p.guid"
           autoplay
           playsinline
-          :muted="deafened"
           :volume="computeVolume(p.distance)"
-          :data-guid="p.guid"
-        />
+          :muted="deafened"
+        ></audio>
+      </div>
+
+      <!-- Debug list -->
+      <div class="debug">
+        <h3>Nearby Players</h3>
+        <ul>
+          <li v-if="nearbyPlayers.length === 0">No players nearby</li>
+          <li v-for="p in nearbyPlayers" :key="p.guid">
+            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
+          </li>
+        </ul>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue';
-import usePlayerPositionEmitter from '@composables/usePlayerPositionEmitter';
+import { ref, watch, onMounted, onUnmounted } from 'vue'
+import usePlayerPositionEmitter from '@composables/usePlayerPositionEmitter'
 
 const {
   setGuid,
@@ -57,56 +59,53 @@ const {
   dispose,
   nearbyPlayers,
   toggleMic
-} = usePlayerPositionEmitter();
+} = usePlayerPositionEmitter()
 
-const guidInput = ref('');
-const guidSet   = ref(false);
-const muted     = ref(false);
-const deafened  = ref(false);
+// UI state
+const guidInput = ref('')
+const guidSet   = ref(false)
+const muted     = ref(false)
+const deafened  = ref(false)
 
-// mute/unmute your mic
-watch(muted, m => toggleMic(m));
+// Mic mute/unmute binding
+watch(muted, val => toggleMic(val))
+// Deafening forces mute
+watch(deafened, val => {
+  muted.value = val
+  toggleMic(val)
+})
 
-// if you “deafen” we also force‐mute
-watch(deafened, d => {
-  muted.value = d;
-  toggleMic(d);
-});
-
-// compute volume falloff:
-//   ≤30 yd  → 1
-//   30–150 yd → linear fade to 0
-//   ≥150 yd → 0
+// volume mapping: ≤10 yd → 1, 10–100 yd → fade, ≥100 yd → 0
 function computeVolume(d) {
-  if (d <= 30) return 1;
-  if (d >= 150) return 0;
-  return 1 - (d - 30) / 120;
+  if (d <= 10) return 1
+  if (d >= 100) return 0
+  return 1 - (d - 10) / 90
 }
 
 onMounted(() => {
-  const saved = localStorage.getItem('guid');
+  const saved = localStorage.getItem('guid')
   if (saved) {
-    setGuid(Number(saved));
-    guidInput.value = saved;
-    guidSet.value   = true;
-    connectToProximitySocket();
+    setGuid(Number(saved))
+    guidInput.value = saved
+    guidSet.value    = true
+    connectToProximitySocket()
   }
-});
+})
 
-onUnmounted(() => dispose());
+onUnmounted(() => dispose())
 
 function setGuidHandler() {
-  if (!guidInput.value) return;
-  localStorage.setItem('guid', guidInput.value);
-  setGuid(Number(guidInput.value));
-  guidSet.value = true;
-  connectToProximitySocket();
+  if (!guidInput.value) return
+  localStorage.setItem('guid', guidInput.value)
+  setGuid(Number(guidInput.value))
+  guidSet.value = true
+  connectToProximitySocket()
 }
 
 function resetGuid() {
-  localStorage.removeItem('guid');
-  guidInput.value = '';
-  guidSet.value   = false;
+  localStorage.removeItem('guid')
+  guidInput.value = ''
+  guidSet.value    = false
 }
 </script>
 
@@ -116,7 +115,8 @@ function resetGuid() {
   flex-direction: column;
   gap: 0.5rem;
 }
-input, button {
+input[type='number'],
+button {
   padding: 0.5rem;
   font-size: 0.9rem;
   background: #2e2e40;
@@ -126,6 +126,7 @@ input, button {
 }
 button:hover { background: #44445c; }
 label { display: block; margin-top: 0.5rem; }
-.audio-container { display: none; /* keep them in DOM only */ }
+.audio-container { margin: 1rem 0; }
+.audio-container audio { width: 100%; margin-bottom: 0.5rem; }
 .debug { margin-top: 1rem; font-size: 0.8rem; }
 </style>

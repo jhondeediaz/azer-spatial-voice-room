@@ -13,13 +13,18 @@
     <!-- Main UI -->
     <div v-else class="main-ui">
       <!-- ⚙ Settings toggle -->
-      <button v-if="!showSettings" class="settings-btn" @click="showSettings = !showSettings">⚙️</button>
+      <button class="settings-btn" @click="showSettings = !showSettings">
+        ⚙️
+      </button>
 
       <!-- Mic selector -->
       <div v-if="showSettings" class="settings-panel">
         <label class="control-item">
           Select mic:
-          <select v-model="selectedMicId" @change="changeMic(selectedMicId)">
+          <select
+            v-model="selectedMicId"
+            @change="handleMicChange"
+          >
             <option
               v-for="d in audioDevices"
               :key="d.deviceId"
@@ -29,7 +34,9 @@
             </option>
           </select>
         </label>
-        <button class="btn small" @click="showSettings = false">Back</button>
+        <button class="btn small" @click="showSettings = false">
+          Back
+        </button>
       </div>
 
       <!-- Mute / Deafen controls -->
@@ -42,7 +49,9 @@
           <input type="checkbox" v-model="deafened" />
           <span class="label-text">Deafen</span>
         </label>
-        <button class="btn small" @click="resetGuid">Change ID</button>
+        <button class="btn small" @click="resetGuid">
+          Change ID
+        </button>
       </div>
 
       <!-- Debug list (scrollable if large) -->
@@ -51,7 +60,7 @@
         <ul>
           <li v-if="nearbyPlayers.length === 0">No players nearby</li>
           <li v-for="p in nearbyPlayers" :key="p.guid">
-            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
+            GUID {{ p.guid }} — {{ p.distance.toFixed(1) }} yd
           </li>
         </ul>
       </div>
@@ -112,13 +121,20 @@ watch(deafened, v => {
   toggleMic(muted.value)
 })
 
-/** Enumerate mics for settings pane */
+/** Enumerator */
 async function updateDeviceList() {
   const devs = await navigator.mediaDevices.enumerateDevices()
   audioDevices.value = devs.filter(d => d.kind === 'audioinput')
   if (audioDevices.value.length) {
     selectedMicId.value = audioDevices.value[0].deviceId
   }
+}
+
+/** Apply changeMic + reapply mute state */
+async function handleMicChange() {
+  await changeMic(selectedMicId.value)
+  // re-mute if needed
+  toggleMic(muted.value)
 }
 
 onMounted(async () => {
@@ -148,7 +164,6 @@ function resetGuid() {
   guidSet.value   = false
 }
 </script>
-
 <style>
 /* container & font */
 .container {

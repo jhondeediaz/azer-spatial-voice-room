@@ -1,3 +1,4 @@
+// src/renderer/src/composables/usePlayerPositionEmitter.js
 import { ref, nextTick } from 'vue'
 import { Room, createLocalAudioTrack } from 'livekit-client'
 
@@ -16,27 +17,21 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
-  const audioContexts  = new Map()  // guid -> { stereoPanner, source, el }
+  let deafened         = false     // ← track deafen state
+
+  const audioContexts  = new Map()  // guid → { stereoPanner, source, el }
 
   function log(...args) {
     console.log('[usePlayerPositionEmitter]', ...args)
   }
 
-  /** UI calls this to set your GUID */
-  function setGuid(x) {
-    guid = x
-  }
+  function setGuid(x) { guid = x }
 
-  /** Open or re-open your proximity websocket */
   function connectToProximitySocket() {
-    if (!guid) {
-      log('🚫 GUID not set')
-      return
-    }
+    if (!guid) return log('🚫 GUID not set')
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
       return
     }
-
     ws = new WebSocket(PROXIMITY_WS)
     ws.onopen = () => {
       log('✅ Proximity WS connected')
@@ -55,12 +50,10 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
-  /** Fetch a token, connect to LiveKit, and publish your mic */
   async function joinLivekitRoom(mapId) {
     if (livekitRoom && currentMap === mapId) return
-
     if (livekitRoom) {
-      await livekitRoom.disconnect().catch(e => log('disconnect err', e))
+      await livekitRoom.disconnect().catch(e => log('⚠️ disconnect err', e))
       livekitRoom = null
     }
 
@@ -74,21 +67,21 @@ export default function usePlayerPositionEmitter() {
       })
       if (!res.ok) throw new Error(`status ${res.status}`)
       const json = await res.json()
-      tokenStr = typeof json.token === 'string'
-        ? json.token
-        : json.token?.token
+      tokenStr = typeof json.token === 'string' ? json.token : json.token?.token
       if (!tokenStr) throw new Error('invalid token payload')
       log('🎟 using token…')
     } catch (err) {
       return log('⚠️ token fetch failed', err)
     }
 
-    // connect & publish
     livekitRoom = new Room()
     livekitRoom.on('trackSubscribed', (track, _, participant) => {
       const el = document.querySelector(`audio[data-guid="${participant.identity}"]`)
-      if (el) track.attach(el)
-      else console.warn('no <audio> for', participant.identity)
+      if (el) {
+        track.attach(el)
+        // enforce current deafened state on new tracks
+        el.muted = deafened
+      }
     })
 
     try {
@@ -110,10 +103,8 @@ export default function usePlayerPositionEmitter() {
     }
   }
 
-  /** Handle incoming proximity data, update volumes & panning */
   async function handleProximityUpdate(data) {
     if (!guid || typeof data !== 'object') return
-
     const all = Object.values(data).flat()
     const self = all.find(p => String(p.guid) === String(guid))
     if (!self) return log('⚠️ self not in payload')
@@ -123,7 +114,11 @@ export default function usePlayerPositionEmitter() {
       .map(p => ({
         guid: p.guid,
         x: p.x, y: p.y, z: p.z || 0,
-        distance: Math.hypot(p.x - self.x, p.y - self.y, (p.z||0)-(self.z||0)),
+        distance: Math.hypot(
+          p.x - self.x,
+          p.y - self.y,
+          (p.z || 0) - (self.z || 0)
+        )
       }))
       .filter(p => p.distance <= 150)
 
@@ -149,28 +144,29 @@ export default function usePlayerPositionEmitter() {
         if (!el) return
 
         track.attach(el)
-        let entry = audioContexts.get(p.guid)
+        el.muted = deafened       // enforce deafen / undeafen
 
-        // volume calculation
+        let entry = audioContexts.get(p.guid)
+        // --- volume logic ---
         const minD = 5, maxD = 150
-        let volume = p.distance <= minD
+        let vol = p.distance <= minD
           ? 1
           : p.distance >= maxD
             ? 0
             : 1 - (p.distance - minD) / (maxD - minD)
-        el.volume = Math.max(0, Math.min(1, volume))
+        el.volume = Math.max(0, Math.min(1, vol))
 
-        // pan calculation
+        // --- panning logic ---
         const panRange = 5
         let pan = (p.x - self.x) / panRange
         pan = Math.max(-1, Math.min(1, pan))
 
         if (!entry) {
           const source = sharedAudioContext.createMediaElementSource(el)
-          const stereoPanner = sharedAudioContext.createStereoPanner()
-          stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime)
-          source.connect(stereoPanner).connect(sharedAudioContext.destination)
-          audioContexts.set(p.guid, { stereoPanner, source, el })
+          const panner = sharedAudioContext.createStereoPanner()
+          panner.pan.setValueAtTime(pan, sharedAudioContext.currentTime)
+          source.connect(panner).connect(sharedAudioContext.destination)
+          audioContexts.set(p.guid, { stereoPanner: panner, source, el })
         } else {
           entry.stereoPanner.pan.setValueAtTime(pan, sharedAudioContext.currentTime)
         }
@@ -178,13 +174,22 @@ export default function usePlayerPositionEmitter() {
     })
   }
 
-  /** Mute/unmute your mic */
   function toggleMic(mute) {
     if (!localAudioTrack) return
     mute ? localAudioTrack.mute() : localAudioTrack.unmute()
   }
 
-  /** 📢 Runtime mic‐change: unpublish old track, publish new one */
+  /**
+   * Mute/unmute all incoming audio players
+   * @param {boolean} state
+   */
+  function setDeafened(state) {
+    deafened = state
+    document
+      .querySelectorAll('audio[data-guid]')
+      .forEach(el => { el.muted = state })
+  }
+
   async function changeMic(deviceId) {
     if (!livekitRoom) return
     if (localAudioTrack) {
@@ -201,7 +206,6 @@ export default function usePlayerPositionEmitter() {
     await livekitRoom.localParticipant.publishTrack(localAudioTrack)
   }
 
-  /** Clean-up */
   function dispose() {
     clearTimeout(reconnectTimer)
     ws?.close()
@@ -226,6 +230,7 @@ export default function usePlayerPositionEmitter() {
     connectToProximitySocket,
     toggleMic,
     changeMic,
+    setDeafened,   // ← expose it here
     dispose,
   }
 }

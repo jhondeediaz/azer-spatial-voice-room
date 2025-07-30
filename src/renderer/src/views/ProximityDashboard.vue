@@ -13,7 +13,7 @@
     <!-- Main UI -->
     <div v-else class="main-ui">
       <!-- ⚙ Settings toggle -->
-      <button class="settings-btn" @click="showSettings = !showSettings">
+      <button v-if="!showSettings" class="settings-btn" @click="showSettings = !showSettings">
         ⚙️
       </button>
 
@@ -91,7 +91,8 @@ const {
   dispose,
   nearbyPlayers,
   toggleMic,
-  changeMic
+  changeMic,
+  setDeafened
 } = usePlayerPositionEmitter()
 
 // UI state
@@ -119,6 +120,7 @@ watch(muted, v => {
 watch(deafened, v => {
   if (v) muted.value = true
   toggleMic(muted.value)
+  setDeafened(v)
 })
 
 /** Enumerator */

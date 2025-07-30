@@ -13,7 +13,7 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
-  const audioContexts = new Map(); // guid -> { context, panner, source, el }
+  const audioContexts  = new Map(); // guid -> { context, panner, source, el }
 
   function log(...args) { console.log('[usePlayerPositionEmitter]', ...args) }
 
@@ -213,6 +213,24 @@ export default function usePlayerPositionEmitter() {
     await livekitRoom.localParticipant.publishTrack(localAudioTrack);
   }
 
+  /** Deafen / Undeafen for CPU savings */
+  function setDeafened(state) {
+    audioContexts.forEach(({ context, source, panner }) => {
+      try {
+        if (state) {
+          // Disconnect graph completely to stop DSP
+          source.disconnect();
+          panner.disconnect();
+        } else {
+          // Reconnect graph
+          source.connect(panner).connect(context.destination);
+        }
+      } catch (err) {
+        console.warn('Audio graph toggle failed', err);
+      }
+    });
+  }
+
   /** Cleanup on unmount */
   function dispose() {
     clearTimeout(reconnectTimer)
@@ -229,5 +247,7 @@ export default function usePlayerPositionEmitter() {
     setGuid,
     connectToProximitySocket,
     toggleMic,
+    setDeafened,
+    dispose
   }
 }

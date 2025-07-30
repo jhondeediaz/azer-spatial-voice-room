@@ -22,7 +22,7 @@
       </label>
       <button @click="resetGuid">Change GUID</button>
 
-      <!-- Audio players rendered by Vue so volume bindings work -->
+      <!-- Audio players (volume controlled by computeVolume) -->
       <div class="audio-container">
         <audio
           v-for="p in nearbyPlayers"
@@ -31,7 +31,6 @@
           autoplay
           playsinline
           :volume="computeVolume(p.distance)"
-          :muted="deafened"
         ></audio>
       </div>
 
@@ -58,7 +57,7 @@ const {
   connectToProximitySocket,
   dispose,
   nearbyPlayers,
-  toggleMic
+  toggleMic,
 } = usePlayerPositionEmitter()
 
 // UI state
@@ -67,19 +66,34 @@ const guidSet   = ref(false)
 const muted     = ref(false)
 const deafened  = ref(false)
 
-// Mic mute/unmute binding
-watch(muted, val => toggleMic(val))
-// Deafening forces mute
-watch(deafened, val => {
-  muted.value = val
-  toggleMic(val)
-})
-
+/** Volume attenuation based on distance */
 function computeVolume(d) {
   if (d <= 10) return 1
   if (d >= 150) return 0
   return 1 - (d - 10) / 140
 }
+
+/** Watchers for mic and speaker control */
+watch(muted, val => {
+  toggleMic(val)
+  if (!val) {
+    // If we unmute, automatically undeafen for speakers
+    if (deafened.value) deafened.value = false
+  }
+})
+
+watch(deafened, val => {
+  // Deafening forces mic mute
+  muted.value = val
+  toggleMic(val)
+  // CPU saving: disconnect audio if deafened
+  const audioEls = document.querySelectorAll('.audio-container audio')
+  audioEls.forEach(el => {
+    el.muted = val
+  })
+})
+
+/** Lifecycle */
 onMounted(() => {
   const saved = localStorage.getItem('guid')
   if (saved) {
@@ -92,6 +106,7 @@ onMounted(() => {
 
 onUnmounted(() => dispose())
 
+/** GUID management */
 function setGuidHandler() {
   if (!guidInput.value) return
   localStorage.setItem('guid', guidInput.value)
@@ -108,10 +123,19 @@ function resetGuid() {
 </script>
 
 <style>
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #1c1c28;
+  color: #eee;
+  margin: 0;
+  padding: 1rem;
+}
 .guid-prompt {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  max-width: 200px;
+  margin: 3rem auto;
 }
 input[type='number'],
 button {

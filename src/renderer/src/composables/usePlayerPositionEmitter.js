@@ -6,7 +6,6 @@ const PROXIMITY_WS      = import.meta.env.VITE_PROXIMITY_WS
 const LIVEKIT_URL       = import.meta.env.VITE_LIVEKIT_URL
 const TOKEN_SERVICE_URL = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
 
-// Shared AudioContext for positional audio
 let sharedAudioContext = null
 
 export default function usePlayerPositionEmitter() {
@@ -17,7 +16,9 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
-  let deafened         = false     // ← track deafen state
+
+  let muted            = false
+  let deafened         = false
 
   const audioContexts  = new Map()  // guid → { stereoPanner, source, el }
 
@@ -29,9 +30,8 @@ export default function usePlayerPositionEmitter() {
 
   function connectToProximitySocket() {
     if (!guid) return log('🚫 GUID not set')
-    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-      return
-    }
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
+
     ws = new WebSocket(PROXIMITY_WS)
     ws.onopen = () => {
       log('✅ Proximity WS connected')
@@ -52,12 +52,14 @@ export default function usePlayerPositionEmitter() {
 
   async function joinLivekitRoom(mapId) {
     if (livekitRoom && currentMap === mapId) return
+
+    // Disconnect old room
     if (livekitRoom) {
       await livekitRoom.disconnect().catch(e => log('⚠️ disconnect err', e))
       livekitRoom = null
     }
 
-    // fetch token
+    // Fetch token
     let tokenStr
     try {
       const res = await fetch(`${TOKEN_SERVICE_URL}/token`, {
@@ -79,8 +81,7 @@ export default function usePlayerPositionEmitter() {
       const el = document.querySelector(`audio[data-guid="${participant.identity}"]`)
       if (el) {
         track.attach(el)
-        // enforce current deafened state on new tracks
-        el.muted = deafened
+        el.muted = deafened // enforce current deafen state
       }
     })
 
@@ -90,12 +91,23 @@ export default function usePlayerPositionEmitter() {
         noiseSuppression: false,
         autoGainControl:  false,
       })
+
       await livekitRoom.connect(LIVEKIT_URL, tokenStr, {
         autoSubscribe: true,
         name: String(guid),
         room: String(mapId),
       })
+
       await livekitRoom.localParticipant.publishTrack(localAudioTrack)
+
+      // 🔹 Immediately reapply mute if user was muted
+      if (muted && localAudioTrack) {
+        localAudioTrack.mute()
+      }
+
+      // 🔹 Reapply deafen
+      setDeafened(deafened)
+
       currentMap = mapId
       log('🎧 LiveKit map', mapId)
     } catch (err) {
@@ -105,6 +117,7 @@ export default function usePlayerPositionEmitter() {
 
   async function handleProximityUpdate(data) {
     if (!guid || typeof data !== 'object') return
+
     const all = Object.values(data).flat()
     const self = all.find(p => String(p.guid) === String(guid))
     if (!self) return log('⚠️ self not in payload')
@@ -144,10 +157,11 @@ export default function usePlayerPositionEmitter() {
         if (!el) return
 
         track.attach(el)
-        el.muted = deafened       // enforce deafen / undeafen
+        el.muted = deafened // enforce deafen on updates
 
         let entry = audioContexts.get(p.guid)
-        // --- volume logic ---
+
+        // Volume logic
         const minD = 5, maxD = 150
         let vol = p.distance <= minD
           ? 1
@@ -156,7 +170,7 @@ export default function usePlayerPositionEmitter() {
             : 1 - (p.distance - minD) / (maxD - minD)
         el.volume = Math.max(0, Math.min(1, vol))
 
-        // --- panning logic ---
+        // Panning logic
         const panRange = 5
         let pan = (p.x - self.x) / panRange
         pan = Math.max(-1, Math.min(1, pan))
@@ -174,19 +188,15 @@ export default function usePlayerPositionEmitter() {
     })
   }
 
-  function toggleMic(mute) {
+  function toggleMic(state) {
+    muted = state
     if (!localAudioTrack) return
-    mute ? localAudioTrack.mute() : localAudioTrack.unmute()
+    state ? localAudioTrack.mute() : localAudioTrack.unmute()
   }
 
-  /**
-   * Mute/unmute all incoming audio players
-   * @param {boolean} state
-   */
   function setDeafened(state) {
     deafened = state
-    document
-      .querySelectorAll('audio[data-guid]')
+    document.querySelectorAll('audio[data-guid]')
       .forEach(el => { el.muted = state })
   }
 
@@ -204,6 +214,11 @@ export default function usePlayerPositionEmitter() {
       autoGainControl: false,
     })
     await livekitRoom.localParticipant.publishTrack(localAudioTrack)
+
+    // 🔹 Reapply mute after changing mic
+    if (muted && localAudioTrack) {
+      localAudioTrack.mute()
+    }
   }
 
   function dispose() {
@@ -230,7 +245,7 @@ export default function usePlayerPositionEmitter() {
     connectToProximitySocket,
     toggleMic,
     changeMic,
-    setDeafened,   // ← expose it here
+    setDeafened,
     dispose,
   }
 }

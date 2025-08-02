@@ -7,7 +7,7 @@ function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 320,
-    height: 200,
+    height: 230,
     resizable: false,
     title: 'AzerothFunk',
     show: false,

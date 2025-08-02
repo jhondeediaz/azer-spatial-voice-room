@@ -16,6 +16,7 @@ export default function usePlayerPositionEmitter() {
   let livekitRoom      = null
   let currentMap       = null
   let localAudioTrack  = null
+  const connectionStatus = ref('Disconnected') // 'connecting' | 'connected' | 'disconnected'
 
   let muted            = false
   let deafened         = false
@@ -29,15 +30,15 @@ export default function usePlayerPositionEmitter() {
   function setGuid(x) { guid = x }
 
   function connectToProximitySocket() {
-    if (!guid) return log('🚫 GUID not set')
+    if (!guid) return log('GUID not set')
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
 
     ws = new WebSocket(PROXIMITY_WS)
     ws.onopen = () => {
-      log('✅ Proximity WS connected')
+      log('Proximity WS connected')
       ws.send(JSON.stringify({ guid }))
     }
-    ws.onerror = e => log('⚠️ WS error', e)
+    ws.onerror = e => log('WS error', e)
     ws.onclose = () => {
       log('🔁 WS closed, reconnecting in 2s')
       reconnectTimer = setTimeout(connectToProximitySocket, 2000)
@@ -45,7 +46,7 @@ export default function usePlayerPositionEmitter() {
     ws.onmessage = e => {
       let data
       try { data = JSON.parse(e.data) }
-      catch { return log('⚠️ Bad JSON', e.data) }
+      catch { return log('Bad JSON', e.data) }
       handleProximityUpdate(data)
     }
   }
@@ -53,9 +54,11 @@ export default function usePlayerPositionEmitter() {
   async function joinLivekitRoom(mapId) {
     if (livekitRoom && currentMap === mapId) return
 
+    connectionStatus.value = 'Connecting...'
+
     // Disconnect old room
     if (livekitRoom) {
-      await livekitRoom.disconnect().catch(e => log('⚠️ disconnect err', e))
+      await livekitRoom.disconnect().catch(e => log('disconnect err', e))
       livekitRoom = null
     }
 
@@ -71,12 +74,19 @@ export default function usePlayerPositionEmitter() {
       const json = await res.json()
       tokenStr = typeof json.token === 'string' ? json.token : json.token?.token
       if (!tokenStr) throw new Error('invalid token payload')
-      log('🎟 using token…')
+      log('using token…')
     } catch (err) {
-      return log('⚠️ token fetch failed', err)
+      return log('token fetch failed', err)
     }
 
     livekitRoom = new Room()
+    livekitRoom.on('connected', () => {
+      connectionStatus.value = 'Connected'
+    })
+    livekitRoom.on('disconnected', () => {
+      connectionStatus.value = 'Disconnected'
+    })
+
     livekitRoom.on('trackSubscribed', (track, _, participant) => {
       const el = document.querySelector(`audio[data-guid="${participant.identity}"]`)
       if (el) {
@@ -109,9 +119,9 @@ export default function usePlayerPositionEmitter() {
       setDeafened(deafened)
 
       currentMap = mapId
-      log('🎧 LiveKit map', mapId)
+      log('LiveKit map', mapId)
     } catch (err) {
-      log('⚠️ LiveKit connect failed', err)
+      log('️LiveKit connect failed', err)
     }
   }
 
@@ -120,7 +130,13 @@ export default function usePlayerPositionEmitter() {
 
     const all = Object.values(data).flat()
     const self = all.find(p => String(p.guid) === String(guid))
-    if (!self) return log('⚠️ self not in payload')
+
+    if (!self) {
+      connectionStatus.value = "Disconnected - Character[Offline]"
+      return log('self not in payload')
+    } else {
+      connectionStatus.value = "Connected"
+    }
 
     const peers = all
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
@@ -247,5 +263,6 @@ export default function usePlayerPositionEmitter() {
     changeMic,
     setDeafened,
     dispose,
+    connectionStatus
   }
 }

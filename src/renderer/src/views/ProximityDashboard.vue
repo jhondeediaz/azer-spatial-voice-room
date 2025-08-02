@@ -12,6 +12,11 @@
 
     <!-- Main UI -->
     <div v-else class="main-ui">
+
+    <div class="status-bar">
+      <span class="status-label"><span :class="(connectionStatus.includes('Disconnected') ? 'Disconnected' : 'Connected')">{{ connectionStatus }}</span></span>
+      <span v-if="debug" class="player-count">Players Nearby: {{ nearbyPlayers.length }}</span>
+    </div>
       <!-- ⚙ Settings toggle -->
       <button v-if="!showSettings" class="settings-btn" @click="showSettings = !showSettings">
         ⚙️
@@ -38,6 +43,7 @@
           Back
         </button>
       </div>
+
 
       <!-- Mute / Deafen controls -->
       <div v-else class="controls">
@@ -92,7 +98,8 @@ const {
   nearbyPlayers,
   toggleMic,
   changeMic,
-  setDeafened
+  setDeafened,
+  connectionStatus
 } = usePlayerPositionEmitter()
 
 // UI state
@@ -152,7 +159,7 @@ onMounted(async () => {
 
 onUnmounted(() => dispose())
 
-function setGuidHandler() {
+async function setGuidHandler() {
   if (!guidInput.value) return
   localStorage.setItem('guid', guidInput.value)
   setGuid(Number(guidInput.value))
@@ -181,7 +188,8 @@ function resetGuid() {
 /* card styles */
 .guid-prompt,
 .main-ui {
-  max-width: 320px;
+  width: 280px;
+  max-width: 100%;
   margin: auto;
   background: #23233a;
   border-radius: 8px;
@@ -289,5 +297,22 @@ input[type='number'] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  color: #7aff7a;
+}
+.status-label .Connecting {
+  color: #f7c14f;
+}
+.status-label .Connected {
+  color: #4fff4f;
+}
+.status-label .Disconnected {
+  color: #ff4f4f;
 }
 </style>

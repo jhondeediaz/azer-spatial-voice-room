@@ -1,7 +1,7 @@
 {
   "name": "azeroth-funk",
   "productName": "AzerothFunk",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "AzerothFunk - ProximityVoice",
   "main": "./out/main/index.js",
   "author": "example.com",

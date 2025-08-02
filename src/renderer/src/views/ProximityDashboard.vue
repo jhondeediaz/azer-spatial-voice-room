@@ -199,9 +199,9 @@ function resetGuid() {
 
 /* inputs & buttons */
 input[type='number'] {
-  width: 100%;
+  width: 210px;
   padding: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-right: 0.5rem;
   background: #2e2e40;
   color: #a2ff99;
   border: none;

@@ -138,6 +138,16 @@ export default function usePlayerPositionEmitter() {
       connectionStatus.value = "Connected"
     }
 
+    if (!self.online) {
+    // player is offline, leave the room if connected
+    if (livekitRoom) {
+      await livekitRoom.disconnect()
+      livekitRoom = null
+      currentMap = null
+    }
+    return
+  }
+
     const peers = all
       .filter(p => p.guid !== guid && String(p.map) === String(self.map))
       .map(p => ({
@@ -154,7 +164,11 @@ export default function usePlayerPositionEmitter() {
     nearbyPlayers.value = peers
     log('🔍 nearby', peers)
 
-    await joinLivekitRoom(self.map)
+    if (self.online) {
+      await joinLivekitRoom(self.map)
+    } else {
+      return
+    }
     await nextTick()
 
     if (!sharedAudioContext) {

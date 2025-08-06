@@ -5,6 +5,7 @@ import { Room, createLocalAudioTrack } from 'livekit-client'
 const PROXIMITY_WS      = import.meta.env.VITE_PROXIMITY_WS
 const LIVEKIT_URL       = import.meta.env.VITE_LIVEKIT_URL
 const TOKEN_SERVICE_URL = import.meta.env.VITE_LIVEKIT_TOKEN_SERVICE_URL
+const DEBUG_MODE         = import.meta.env.VITE_DEBUG_MODE === 'true'
 
 let sharedAudioContext = null
 
@@ -24,32 +25,46 @@ export default function usePlayerPositionEmitter() {
   const audioContexts  = new Map()  // guid → { stereoPanner, source, el }
 
   function log(...args) {
-    console.log('[usePlayerPositionEmitter]', ...args)
+    if (DEBUG_MODE) {
+      console.log('[usePlayerPositionEmitter]', ...args)
+    }
   }
 
   function setGuid(x) { guid = x }
 
-  function connectToProximitySocket() {
-    if (!guid) return log('GUID not set')
-    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
 
-    ws = new WebSocket(PROXIMITY_WS)
-    ws.onopen = () => {
-      log('Proximity WS connected')
-      ws.send(JSON.stringify({ guid }))
-    }
-    ws.onerror = e => log('WS error', e)
-    ws.onclose = () => {
-      log('🔁 WS closed, reconnecting in 2s')
-      reconnectTimer = setTimeout(connectToProximitySocket, 2000)
-    }
-    ws.onmessage = e => {
-      let data
-      try { data = JSON.parse(e.data) }
-      catch { return log('Bad JSON', e.data) }
-      handleProximityUpdate(data)
-    }
+function connectToProximitySocket() {
+  if (!guid) return log('GUID not set')
+  // if already connecting or open, bail out
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    return
   }
+
+  // — Debounce any pending reconnect —
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
+  ws = new WebSocket(PROXIMITY_WS)
+  ws.onopen = () => {
+    log('Proximity WS connected')
+    ws.send(JSON.stringify({ guid }))
+  }
+  ws.onerror = e => log('WS error', e)
+  ws.onclose = () => {
+    log('🔁 WS closed, reconnecting in 2s')
+    // clear again in case onclose fires multiple times
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = setTimeout(connectToProximitySocket, 5000)
+  }
+  ws.onmessage = e => {
+    let data
+    try { data = JSON.parse(e.data) }
+    catch { return log('Bad JSON', e.data) }
+    handleProximityUpdate(data)
+  }
+}
 
   async function joinLivekitRoom(mapId) {
     if (livekitRoom && currentMap === mapId) return
